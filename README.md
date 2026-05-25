@@ -36,6 +36,6 @@ sudo systemctl restart stargate.service
 
 Original base project: StargateProject SG1 software from the BuildAStargate/Jordan/Kristian/Jonnerd project lineage.
 
-Additional source/idea credit: Feature idea by Marcin/Codex over StargateProject address-book and subspace code.
+Additional source/idea credit: Feature idea by matelv-x/Codex over StargateProject address-book and subspace code.
 
 How much is copied or changed: Script-based patch and scanner; it does not copy the whole project.
