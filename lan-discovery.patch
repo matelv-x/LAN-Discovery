@@ -1,0 +1,297 @@
+diff -ruN original/classes/stargate_address_book.py upgraded/classes/stargate_address_book.py
+--- original/classes/stargate_address_book.py	2026-05-14 20:20:25
++++ upgraded/classes/stargate_address_book.py	2026-05-14 20:37:13
+@@ -38,10 +38,10 @@
+ 
+     def get_local_gate_name(self):
+         if not self.get_local_address():
+-            return "Stargate"
++            return "LAN Gate"
+         name = self.manager.get_planet_name_by_address( self.get_local_address() )
+         if name == "Unknown Address":
+-            return "Stargate"
++            return "LAN Gate"
+ 
+         return name
+ 
+@@ -121,11 +121,17 @@
+ 
+         return False
+ 
+-    def set_lan_gate(self, name, gate_address, ip_address, is_black_hole=False):
++    def set_lan_gate(self, name, gate_address, ip_address, is_black_hole=False, is_gate_online="1"):
+         # TODO: Validate gate_address, ip_address
+         # TODO: Ensure unique address
+         lan_gates = self.get_lan_gates()
+-        lan_gates[name] = { "name": name, "gate_address": gate_address, "ip_address": ip_address, "is_black_hole": is_black_hole }
++        lan_gates[name] = {
++            "name": name,
++            "gate_address": gate_address,
++            "ip_address": ip_address,
++            "is_gate_online": is_gate_online,
++            "is_black_hole": is_black_hole,
++        }
+         self.datastore.set("lan_gates", lan_gates)
+ 
+     # ----
+diff -ruN original/classes/stargate_address_manager.py upgraded/classes/stargate_address_manager.py
+--- original/classes/stargate_address_manager.py	2026-05-14 20:20:25
++++ upgraded/classes/stargate_address_manager.py	2026-05-11 01:51:22
+@@ -1,6 +1,9 @@
+ from ast import literal_eval
++from concurrent.futures import ThreadPoolExecutor, as_completed
+ from datetime import datetime
++from ipaddress import ip_network
+ import json
++from threading import Thread
+ import requests
+ 
+ from stargate_address_book import StargateAddressBook
+@@ -33,6 +36,10 @@
+             update_interval = self.cfg.get("fan_gate_refresh_interval")
+             stargate.app.schedule.every(update_interval).minutes.do( self.update_fan_gates_from_api )
+ 
++        self.lan_discovery_interval = 5
++        self.stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)
++        self.start_lan_gate_discovery()
++
+     def get_book(self):
+         return self.address_book
+ 
+@@ -80,6 +87,80 @@
+ 
+         return self.fan_gates
+ 
++    def start_lan_gate_discovery(self):
++        discovery_thread = Thread(target=self.update_lan_gates_from_network, daemon=True)
++        discovery_thread.start()
++
++    def update_lan_gates_from_network(self):
++        """Discover Stargates on local LAN without Internet/Subspace."""
++        local_ip = self.net_tools.get_ip_by_interface_list(['wlan0', 'eth0', 'en0', 'en1'])
++        if not local_ip:
++            self.log.log("LAN Gate Discovery: no LAN IP found")
++            return {}
++
++        try:
++            network = ip_network(f"{local_ip}/24", strict=False)
++        except ValueError as exc:
++            self.log.log(f"LAN Gate Discovery: invalid local network for {local_ip}: {exc}")
++            return {}
++
++        port = self.cfg.get("control_api_server_port")
++        found = {}
++        hosts = [str(host) for host in network.hosts() if str(host) != local_ip]
++
++        self.log.log(f"LAN Gate Discovery: scanning {network} on port {port}")
++        with ThreadPoolExecutor(max_workers=32) as executor:
++            future_to_ip = {
++                executor.submit(self._probe_lan_stargate, ip_addr, port): ip_addr
++                for ip_addr in hosts
++            }
++            for future in as_completed(future_to_ip):
++                gate = future.result()
++                if not gate:
++                    continue
++
++                name = gate["name"]
++                found[name] = gate
++                self.address_book.set_lan_gate(
++                    name,
++                    gate["gate_address"],
++                    gate["ip_address"],
++                    gate["is_black_hole"],
++                )
++
++        if found:
++            self.log.log(f"LAN Gate Discovery: found {len(found)} gate(s): {', '.join(sorted(found.keys()))}")
++        else:
++            self.log.log("LAN Gate Discovery: no local gates found")
++
++        return found
++
++    def _probe_lan_stargate(self, ip_addr, port):
++        url = f"http://{ip_addr}:{port}/get/system_info"
++        try:
++            response = requests.get(url, timeout=2.0)
++            if response.status_code != 200:
++                return None
++            data = response.json()
++        except (requests.RequestException, ValueError, json.JSONDecodeError):
++            return None
++
++        gate_address = data.get("local_stargate_address")
++        if not isinstance(gate_address, list) or len(gate_address) != 6:
++            return None
++        if gate_address == self.address_book.get_local_address():
++            return None
++
++        gate_name = data.get("gate_name") or f"Stargate {ip_addr}"
++        return {
++            "name": str(gate_name),
++            "gate_address": gate_address,
++            "ip_address": ip_addr,
++            "is_gate_online": "1",
++            "is_black_hole": False,
++            "type": "lan",
++        }
++
+     def valid_planet(self, address):
+         """
+             A helper function to check if the dialed address is a valid planet address. This function excludes the
+@@ -150,17 +231,26 @@
+ 
+         return True, "", None
+ 
++    def get_gate_entry_from_ip(self, remote_ip):
++        """
++        Find a fan/LAN gate entry by the source IP seen by the Subspace socket.
++        """
++        remote_ip = str(remote_ip)
++        for stargate_config in self.address_book.get_fan_and_lan_addresses().values():
++            if str(stargate_config.get('ip_address')) == remote_ip:
++                return stargate_config
++        return None
++
+     def get_stargate_address_from_ip(self, remote_ip):
+         """
+         This function simply gets the stargate address that matches the IP address
+         :param remote_ip: the IP address as a string
+         :return: The stargate's IP address is returned as a string, or "Unknown" if not found
+         """
+-        stargate_ip = 'Unknown'
+-        for stargate_config in self.address_book.get_fan_and_lan_addresses().values():
+-            if stargate_config['ip_address'] == remote_ip:
+-                return stargate_config['name'] # TODO: Should this return `gate_address`?
+-        return str(stargate_ip) # If the gate address of the IP was not found
++        stargate_config = self.get_gate_entry_from_ip(remote_ip)
++        if stargate_config:
++            return stargate_config['name'] # TODO: Should this return `gate_address`?
++        return f'Unknown ({remote_ip})' # If the gate address of the IP was not found
+ 
+     def get_ip_from_stargate_address(self, stargate_address):
+         """
+@@ -184,10 +274,10 @@
+         :param IP: the IP address as a string
+         :return: The planet/stargate name is returned as a string.
+         """
+-        for gate_name, config in self.address_book.get_fan_and_lan_addresses().items(): # pylint: disable=unused-variable
+-            if config['ip_address'] == str(remote_ip):
+-                return config['name']
+-        return 'Unknown'
++        stargate_config = self.get_gate_entry_from_ip(remote_ip)
++        if stargate_config:
++            return stargate_config['name']
++        return f'Unknown ({remote_ip})'
+ 
+     @staticmethod
+     def get_summary_from_book( book, omit_zeros ):
+diff -ruN original/classes/subspace_server.py upgraded/classes/subspace_server.py
+--- original/classes/subspace_server.py	2026-05-14 20:20:25
++++ upgraded/classes/subspace_server.py	2026-05-03 10:16:59
+@@ -54,7 +54,7 @@
+         self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+         self.server.bind(self.server_address)
+ 
+-    def keep_alive(self, remote_addr, stargate):
++    def keep_alive(self, remote_addr, stargate):
+         """
+         This functions simply sends a ping to the specified IP address every specified interval
+         :param stargate: The stargate object.
+@@ -76,17 +76,27 @@
+                 #self.log.log("Sending keepalive ping")
+                 ping(remote_addr, count=1, timeout=1)
+                 time_since_last_ping = 0
+-            else:
+-                time_since_last_ping+=self.keep_alive_running_check_interval
+-
+-    def handle_incoming_wormhole(self, conn, addr):
+-        if self.logging == "verbose":
+-            self.log.log(f'handle_incoming_wormhole({conn}, {addr}')
+-
+-        stargate_address = self.addr_manager.get_stargate_address_from_ip(addr[0])
+-
+-        connected = True  # while there is a connection from another gate.
+-        while connected:
++            else:
++                time_since_last_ping+=self.keep_alive_running_check_interval
++
++    def remember_incoming_gate(self, remote_ip):
++        gate_entry = self.addr_manager.get_gate_entry_from_ip(remote_ip)
++        if gate_entry:
++            self.stargate.fan_gate_incoming_name = gate_entry.get('name')
++            self.stargate.fan_gate_incoming_address = gate_entry.get('gate_address')
++        else:
++            self.stargate.fan_gate_incoming_name = self.addr_manager.get_planet_name_from_ip(remote_ip)
++            self.stargate.fan_gate_incoming_address = None
++
++    def handle_incoming_wormhole(self, conn, addr):
++        if self.logging == "verbose":
++            self.log.log(f'handle_incoming_wormhole({conn}, {addr}')
++
++        stargate_address = self.addr_manager.get_stargate_address_from_ip(addr[0])
++        planet_name = self.addr_manager.get_planet_name_from_ip(addr[0])
++
++        connected = True  # while there is a connection from another gate.
++        while connected:
+             if self.logging == "verbose":
+                 self.log.log('connected loop')
+ 
+@@ -108,22 +118,22 @@
+                         conn.close()  # close the connection.
+                         return
+ 
+-                    # If a wormhole is already established, and we are receiving DIAL_CENTER_INCOMING from the same gate.
+-                    if self.stargate.wormhole_active and addr[0] == self.stargate.fan_gate_incoming_ip:
+-                        self.stargate.centre_button_incoming = False
+-                        self.stargate.wormhole_active = False
+-                    # If we are dialling (no wormhole established)
+-                    else:
+-                        self.log.log("Received Center Button Incoming")
+-                        self.stargate.centre_button_incoming = True
+-                        # If there are not already a saved IP, or if we dialed an none fan_gate
+-                        if not self.stargate.fan_gate_incoming_ip:
+-                            self.stargate.fan_gate_incoming_ip = addr[0] # Save the IO address when establishing a wormhole.
++                    # If a wormhole is already established, and we are receiving DIAL_CENTER_INCOMING from the same gate.
++                    if self.stargate.wormhole_active and addr[0] == self.stargate.fan_gate_incoming_ip:
++                        self.stargate.centre_button_incoming = False
++                        self.stargate.wormhole_active = False
++                    # If we are dialling (no wormhole established)
++                    else:
++                        self.log.log(f"Received Center Button Incoming from {planet_name} ({addr[0]})")
++                        self.stargate.centre_button_incoming = True
++                        self.remember_incoming_gate(addr[0])
++                        # If there are not already a saved IP, or if we dialed an none fan_gate
++                        if not self.stargate.fan_gate_incoming_ip:
++                            self.stargate.fan_gate_incoming_ip = addr[0] # Save the IO address when establishing a wormhole.
++
++                    if self.logging == "verbose":
++                        self.log.log(f'Line 123: Received from {planet_name} - {stargate_address} -> {msg}')
+ 
+-                    planet_name = self.addr_manager.get_planet_name_from_ip(addr[0])
+-                    if self.logging == "verbose":
+-                        self.log.log(f'Line 123: Received from {planet_name} - {stargate_address} -> {msg}')
+-
+                 # If we are asked about the status (wormhole already active from a different gate or actively dialing out)
+                 elif msg == subspace_messages.CHECK_STATUS:
+                     # If the wormhole is already established, or if we are dialing out.
+@@ -150,13 +160,12 @@
+                         return
+ 
+                     address = self.addr_manager.is_valid(msg)
+-                    for symbol in address:
+-                        if not symbol in self.stargate.address_buffer_incoming:
+-                            self.stargate.address_buffer_incoming.append(symbol)
+-
+-                    planet_name = self.addr_manager.get_planet_name_from_ip(addr[0])
+-                    if self.logging == "verbose":
+-                        self.log.log(f'Received Address Components from {planet_name} - {stargate_address} -> {msg}')
++                    for symbol in address:
++                        if not symbol in self.stargate.address_buffer_incoming:
++                            self.stargate.address_buffer_incoming.append(symbol)
++
++                    self.remember_incoming_gate(addr[0])
++                    self.log.log(f'Received Address Components from {planet_name} ({addr[0]}) - {stargate_address} -> {msg}')
+ 
+                 # For unknown messages
+                 else:
