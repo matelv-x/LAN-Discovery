@@ -315,22 +315,33 @@ def patch_address_manager():
 
                 name = gate["name"]
                 found[name] = gate
-                self.address_book.set_lan_gate(
-                    name,
-                    gate["gate_address"],
-                    gate["ip_address"],
-                    gate["is_black_hole"],
-                )
 
         lan_gates = self.address_book.get_lan_gates()
+        changed = False
+        for name, gate in found.items():
+            for existing_name, existing_gate in list(lan_gates.items()):
+                if existing_name == name:
+                    continue
+                if (
+                    existing_gate.get("gate_address") == gate["gate_address"]
+                    or existing_gate.get("ip_address") == gate["ip_address"]
+                ):
+                    del lan_gates[existing_name]
+                    changed = True
+            if lan_gates.get(name) != gate:
+                lan_gates[name] = gate
+                changed = True
+
         stale = []
         for name, gate in list(lan_gates.items()):
             if name in found or gate.get("is_local_gate"):
                 continue
             del lan_gates[name]
             stale.append(name)
-        if stale:
+            changed = True
+        if changed:
             self.address_book.datastore.set("lan_gates", lan_gates)
+        if stale:
             self.log.log(
                 "LAN Gate Discovery: removed stale records: "
                 + ", ".join(sorted(stale))
