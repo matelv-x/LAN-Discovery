@@ -460,6 +460,19 @@ def patch_app():
 
 
 def get_lan_ip():
+    for interface in ("wlan0", "eth0", "en0", "en1"):
+        try:
+            output = subprocess.check_output(
+                ["ip", "-4", "-o", "addr", "show", "dev", interface],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception:
+            continue
+        match = re.search(r"\binet\s+(\d+(?:\.\d+){3})/", output)
+        if match:
+            return match.group(1)
+
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
             sock.connect(("8.8.8.8", 80))
