@@ -416,6 +416,46 @@ def patch_address_manager():
         return None'''
     text, _ = replace_function(text, "get_ip_from_stargate_address", get_ip)
 
+    gate_entry_from_ip = '''    def get_gate_entry_from_ip(self, remote_ip):
+        """
+        Find a fan/LAN gate entry by the source IP seen by the Subspace socket.
+        """
+        remote_ip = str(remote_ip)
+        for stargate_config in self.address_book.get_fan_and_lan_addresses().values():
+            if str(stargate_config.get('ip_address')) == remote_ip:
+                return stargate_config
+        return None'''
+    if "def get_gate_entry_from_ip" in text:
+        text, _ = replace_function(text, "get_gate_entry_from_ip", gate_entry_from_ip)
+    else:
+        text, inserted = insert_before_function(text, "get_stargate_address_from_ip", gate_entry_from_ip)
+        if not inserted:
+            raise RuntimeError("Unable to add shared FAN/LAN IP lookup")
+
+    get_stargate_address_from_ip = '''    def get_stargate_address_from_ip(self, remote_ip):
+        """
+        Return the gate name that matches a FAN or LAN source IP.
+        """
+        stargate_config = self.get_gate_entry_from_ip(remote_ip)
+        if stargate_config:
+            return stargate_config['name']
+        return 'Unknown' '''
+    text, replaced = replace_function(text, "get_stargate_address_from_ip", get_stargate_address_from_ip)
+    if not replaced:
+        raise RuntimeError("Unable to update get_stargate_address_from_ip")
+
+    get_planet_name_from_ip = '''    def get_planet_name_from_ip(self, remote_ip):
+        """
+        Return the gate name that matches a FAN or LAN source IP.
+        """
+        stargate_config = self.get_gate_entry_from_ip(remote_ip)
+        if stargate_config:
+            return stargate_config['name']
+        return 'Unknown' '''
+    text, replaced = replace_function(text, "get_planet_name_from_ip", get_planet_name_from_ip)
+    if not replaced:
+        raise RuntimeError("Unable to update get_planet_name_from_ip")
+
     if "summary['lan'] = 0" not in text:
         text, replacements = re.subn(
             r"(?m)^(\s+summary\['fan'\]\s*=\s*0\s*)$",
