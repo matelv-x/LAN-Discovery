@@ -416,6 +416,16 @@ def patch_address_manager():
         return None'''
     text, _ = replace_function(text, "get_ip_from_stargate_address", get_ip)
 
+    if "summary['lan'] = 0" not in text:
+        text, replacements = re.subn(
+            r"(?m)^(\s+summary\['fan'\]\s*=\s*0\s*)$",
+            r"\1\n        summary['lan'] = 0",
+            text,
+            count=1,
+        )
+        if replacements != 1:
+            raise RuntimeError("Unable to add LAN address-book summary category")
+
     return write_text_if_changed(path, text)
 
 
