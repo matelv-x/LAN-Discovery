@@ -459,6 +459,20 @@ def patch_address_book_js():
     return write_text_if_changed(path, text)
 
 
+def patch_main_css():
+    path = APP_DIR / "web" / "main.css"
+    text = read_text(path)
+    text, replacements = re.subn(
+        r"(?ms)(\.address-book-row-lan\s*\{\s*background-color:\s*)#[0-9A-Fa-f]{6}(\s*;)",
+        r"\g<1>#6BE310\g<2>",
+        text,
+        count=1,
+    )
+    if replacements != 1:
+        raise RuntimeError("Unable to set LAN address-book color")
+    return write_text_if_changed(path, text)
+
+
 def patch_app():
     ensure_address_config()
     changed = False
@@ -466,6 +480,7 @@ def patch_app():
     changed |= patch_address_manager()
     changed |= patch_web_server()
     changed |= patch_address_book_js()
+    changed |= patch_main_css()
 
     for path in (
         APP_DIR / "classes" / "stargate_address_book.py",
