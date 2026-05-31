@@ -2,7 +2,8 @@
 
 Adds LAN gate scanning and local address-book integration.
 
-This repository is private while it is being checked and verified.
+After a complete scan, records for LAN gates that are no longer visible are
+removed from the local address book.
 
 ## Install
 
@@ -30,6 +31,7 @@ sudo systemctl restart stargate.service
 
 - Patches LAN gate support into address book/address manager code.
 - Scans the local `/24` network for gates on ports 8080 and 80.
+- Removes stale LAN records after each complete scan.
 - Supports `./langate.sh --scan-only` for later scans.
 
 ## Attribution and originality

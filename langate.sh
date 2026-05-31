@@ -322,6 +322,20 @@ def patch_address_manager():
                     gate["is_black_hole"],
                 )
 
+        lan_gates = self.address_book.get_lan_gates()
+        stale = []
+        for name, gate in list(lan_gates.items()):
+            if name in found or gate.get("is_local_gate"):
+                continue
+            del lan_gates[name]
+            stale.append(name)
+        if stale:
+            self.address_book.datastore.set("lan_gates", lan_gates)
+            self.log.log(
+                "LAN Gate Discovery: removed stale records: "
+                + ", ".join(sorted(stale))
+            )
+
         if found:
             self.log.log(f"LAN Gate Discovery: found {len(found)} gate(s): {', '.join(sorted(found.keys()))}")
         else:
@@ -356,6 +370,21 @@ def patch_address_manager():
         }'''
     if "def start_lan_gate_discovery" not in text:
         text, _ = insert_before_function(text, "valid_planet", discovery_block)
+    else:
+        for function_name in (
+            "start_lan_gate_discovery",
+            "update_lan_gates_from_network",
+            "_probe_lan_stargate",
+        ):
+            match = re.search(
+                rf"(?ms)^    def {function_name}\(.*?(?=^    def |\Z)",
+                discovery_block,
+            )
+            if not match:
+                raise RuntimeError(
+                    f"Unable to extract generated function {function_name}"
+                )
+            text, _ = replace_function(text, function_name, match.group(0).rstrip())
 
     get_ip = '''    def get_ip_from_stargate_address(self, stargate_address):
         """
@@ -678,13 +707,12 @@ def scan_and_update():
 
     if not found:
         print("No LAN Stargates found.")
-        for name, gate in lan_gates.items():
+        for name, gate in list(lan_gates.items()):
             if gate.get("is_local_gate"):
                 continue
-            if gate.get("is_gate_online") != "0":
-                gate["is_gate_online"] = "0"
-                changed = True
-                print(f"- Offline: {name} | {gate.get('ip_address', 'unknown')}")
+            del lan_gates[name]
+            changed = True
+            print(f"- Removed stale LAN gate: {name} | {gate.get('ip_address', 'unknown')}")
         if changed:
             save_lan_gates(config, lan_gates)
             return
@@ -716,15 +744,14 @@ def scan_and_update():
         online_names.add(gate["name"])
         print(f"- {action}: {gate['name']} | {gate['ip_address']} | {gate['gate_address']}")
 
-    for name, gate in lan_gates.items():
+    for name, gate in list(lan_gates.items()):
         if name in online_names:
             continue
         if gate.get("is_local_gate"):
             continue
-        if gate.get("is_gate_online") != "0":
-            gate["is_gate_online"] = "0"
-            changed = True
-            print(f"- Offline: {name} | {gate.get('ip_address', 'unknown')}")
+        del lan_gates[name]
+        changed = True
+        print(f"- Removed stale LAN gate: {name} | {gate.get('ip_address', 'unknown')}")
 
     if not changed:
         print()
