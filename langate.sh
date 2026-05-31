@@ -128,7 +128,7 @@ def write_text_if_changed(path, text):
 
 
 def replace_function(text, name, new_body):
-    pattern = re.compile(rf"(?ms)^    def {re.escape(name)}\(.*?(?=^    def |^class |\Z)")
+    pattern = re.compile(rf"(?ms)^    def {re.escape(name)}\(.*?(?=^    @|^    def |^class |\Z)")
     if not pattern.search(text):
         return text, False
     return pattern.sub(new_body.rstrip() + "\n\n", text, count=1), True
