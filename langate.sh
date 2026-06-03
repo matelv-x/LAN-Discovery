@@ -506,11 +506,18 @@ def patch_retro_address_book_html():
         return False
 
     text = read_text(path)
+    text = re.sub(
+        r'(?ms)\s*<div><span>Fan:</span><span class="fan-count">\.</span></div>\s*'
+        r'<div><span>LAN:</span><span class="lan-count">\.</span></div>',
+        '\n'
+        '        <div class="network-counts"><span>Fan:</span><span class="fan-count">.</span><span>LAN:</span><span class="lan-count">.</span></div>',
+        text,
+        count=1,
+    )
     if 'class="lan-count"' not in text:
         text = text.replace(
             '        <div><span>Fan:</span><span class="fan-count">.</span></div>',
-            '        <div><span>Fan:</span><span class="fan-count">.</span></div>\n'
-            '        <div><span>LAN:</span><span class="lan-count">.</span></div>',
+            '        <div class="network-counts"><span>Fan:</span><span class="fan-count">.</span><span>LAN:</span><span class="lan-count">.</span></div>',
         )
     return write_text_if_changed(path, text)
 
@@ -594,6 +601,24 @@ def patch_retro_address_book_css():
             "}\n"
             "section .row.lan .address-book-glyph path:not(.fil1) {\n"
             "  fill: var(--color-lan) !important;\n"
+            "}\n",
+        )
+    if ".address-counts > div.network-counts" not in text:
+        text = text.replace(
+            ".address-counts > div {\n"
+            "  display: flex;\n"
+            "  justify-content: space-between;\n"
+            "}\n",
+            ".address-counts > div {\n"
+            "  display: flex;\n"
+            "  justify-content: space-between;\n"
+            "}\n"
+            ".address-counts > div.network-counts {\n"
+            "  justify-content: flex-end;\n"
+            "  gap: clamp(-100px, 0.45vmin, 4.5px);\n"
+            "}\n"
+            ".address-counts > div.network-counts span:nth-child(3) {\n"
+            "  margin-left: clamp(-100px, 0.75vmin, 7.5px);\n"
             "}\n",
         )
     return write_text_if_changed(path, text)
