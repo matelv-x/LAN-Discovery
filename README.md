@@ -30,6 +30,8 @@ sudo systemctl restart stargate.service
 ## What it changes
 
 - Patches LAN gate support into address book/address manager code.
+- Shows LAN Gates in both the original Address Book and Retro Address Book
+  when Retro is installed.
 - Scans the local `/24` network for gates on ports 8080 and 80.
 - Removes stale LAN records after each complete scan.
 - Supports `./langate.sh --scan-only` for later scans.

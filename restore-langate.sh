@@ -36,6 +36,9 @@ restore_latest "classes/stargate_address_manager.py"
 restore_latest "classes/web_server.py"
 restore_latest "web/js/address_book.js"
 restore_latest "web/main.css"
+restore_latest "web/retro/address_book.html"
+restore_latest "web/retro/js/address_book.js"
+restore_latest "web/retro/css/address_book.css"
 restore_latest "config/milkyway-addresses.json"
 
 sudo find "$APP_DIR/classes" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true

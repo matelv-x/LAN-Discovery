@@ -499,6 +499,106 @@ def patch_address_book_js():
     return write_text_if_changed(path, text)
 
 
+def patch_retro_address_book_html():
+    path = APP_DIR / "web" / "retro" / "address_book.html"
+    if not path.exists():
+        print("Skipped retro address book HTML: retro is not installed")
+        return False
+
+    text = read_text(path)
+    if 'class="lan-count"' not in text:
+        text = text.replace(
+            '        <div><span>Fan:</span><span class="fan-count">.</span></div>',
+            '        <div><span>Fan:</span><span class="fan-count">.</span></div>\n'
+            '        <div><span>LAN:</span><span class="lan-count">.</span></div>',
+        )
+    return write_text_if_changed(path, text)
+
+
+def patch_retro_address_book_js():
+    path = APP_DIR / "web" / "retro" / "js" / "address_book.js"
+    if not path.exists():
+        print("Skipped retro address book JS: retro is not installed")
+        return False
+
+    text = read_text(path)
+    if "const lanCounts = document.querySelector('.lan-count');" not in text:
+        text = text.replace(
+            "const fanCounts = document.querySelector('.fan-count');",
+            "const fanCounts = document.querySelector('.fan-count');\n"
+            "const lanCounts = document.querySelector('.lan-count');",
+        )
+    if "if (lanCounts) lanCounts.textContent = data.summary.lan ?? 0;" not in text:
+        text = text.replace(
+            "    fanCounts.textContent = data.summary.fan;",
+            "    fanCounts.textContent = data.summary.fan;\n"
+            "    if (lanCounts) lanCounts.textContent = data.summary.lan ?? 0;",
+        )
+    if "address['type'] === 'lan'" not in text:
+        text = text.replace(
+            "    if (address['type'] === 'fan') {\n"
+            "      newRow.classList.add('fan');\n"
+            "      newRow\n"
+            "        .querySelector('.info-type')\n"
+            "        .querySelectorAll('span')[1].textContent = 'Fan';\n"
+            "    } else {\n"
+            "      newRow\n"
+            "        .querySelector('.info-type')\n"
+            "        .querySelectorAll('span')[1].textContent = 'Standard';\n"
+            "    }",
+            "    if (address['type'] === 'lan') {\n"
+            "      newRow.classList.add('lan');\n"
+            "      newRow\n"
+            "        .querySelector('.info-type')\n"
+            "        .querySelectorAll('span')[1].textContent = 'LAN';\n"
+            "    } else if (address['type'] === 'fan') {\n"
+            "      newRow.classList.add('fan');\n"
+            "      newRow\n"
+            "        .querySelector('.info-type')\n"
+            "        .querySelectorAll('span')[1].textContent = 'Fan';\n"
+            "    } else {\n"
+            "      newRow\n"
+            "        .querySelector('.info-type')\n"
+            "        .querySelectorAll('span')[1].textContent = 'Standard';\n"
+            "    }",
+        )
+    return write_text_if_changed(path, text)
+
+
+def patch_retro_address_book_css():
+    path = APP_DIR / "web" / "retro" / "css" / "address_book.css"
+    if not path.exists():
+        print("Skipped retro address book CSS: retro is not installed")
+        return False
+
+    text = read_text(path)
+    if "--color-lan:" not in text:
+        text = text.replace(
+            "  --color-good: #07ff0b;",
+            "  --color-good: #07ff0b;\n  --color-lan: #6BE310;",
+        )
+    if "section .row.lan .info-name" not in text:
+        text = text.replace(
+            "section .row.fan .info-name {\n"
+            "  color: var(--color-alt) !important;\n"
+            "}\n",
+            "section .row.fan .info-name {\n"
+            "  color: var(--color-alt) !important;\n"
+            "}\n"
+            "section .row.lan .info-name,\n"
+            "section .row.lan .info-type .alt-color {\n"
+            "  color: var(--color-lan) !important;\n"
+            "}\n"
+            "section .row.lan .small-box {\n"
+            "  background-color: var(--color-lan) !important;\n"
+            "}\n"
+            "section .row.lan .address-book-glyph path:not(.fil1) {\n"
+            "  fill: var(--color-lan) !important;\n"
+            "}\n",
+        )
+    return write_text_if_changed(path, text)
+
+
 def patch_main_css():
     path = APP_DIR / "web" / "main.css"
     text = read_text(path)
@@ -521,6 +621,9 @@ def patch_app():
     changed |= patch_web_server()
     changed |= patch_address_book_js()
     changed |= patch_main_css()
+    changed |= patch_retro_address_book_html()
+    changed |= patch_retro_address_book_js()
+    changed |= patch_retro_address_book_css()
 
     for path in (
         APP_DIR / "classes" / "stargate_address_book.py",
