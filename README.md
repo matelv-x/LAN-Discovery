@@ -35,6 +35,7 @@ sudo systemctl restart stargate.service
 - Colors LAN gates green in the original Address Book.
 - Colors Black Hole addresses red in the original Address Book.
 - Scans the local `/24` network for gates on ports 8080 and 80.
+- Uses a guarded, low-worker LAN scan so Pi 3 systems do not stack scanner threads.
 - Removes stale LAN records after each complete scan.
 - Supports `./langate.sh --scan-only` for later scans.
 

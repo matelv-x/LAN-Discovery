@@ -4,8 +4,8 @@ set -euo pipefail
 APP_DIR="${APP_DIR:-/home/pi/sg1_v4}"
 ADDRESS_FILE="${ADDRESS_FILE:-$APP_DIR/config/milkyway-addresses.json}"
 PORTS="${PORTS:-8080 80}"
-TIMEOUT="${TIMEOUT:-2.5}"
-MAX_WORKERS="${MAX_WORKERS:-32}"
+TIMEOUT="${TIMEOUT:-0.7}"
+MAX_WORKERS="${MAX_WORKERS:-8}"
 RESTART_SERVICE=1
 PATCH_APP=1
 ORIGINAL_ARGS=("$@")
@@ -25,8 +25,8 @@ Environment overrides:
   APP_DIR=/home/pi/sg1_v4
   ADDRESS_FILE=/home/pi/sg1_v4/config/milkyway-addresses.json
   PORTS="8080 80"
-  TIMEOUT=2.5
-  MAX_WORKERS=32
+  TIMEOUT=0.7
+  MAX_WORKERS=8
 EOF
 }
 
@@ -265,25 +265,50 @@ def patch_address_manager():
         text = text.replace("from ast import literal_eval\n", "from ast import literal_eval\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n")
     if "from ipaddress import ip_network" not in text:
         text = text.replace("from datetime import datetime\n", "from datetime import datetime\nfrom ipaddress import ip_network\n")
-    if "from threading import Thread" not in text:
-        text = text.replace("import json\n", "import json\nfrom threading import Thread\n")
+    if "from threading import Lock, Thread" not in text:
+        text = re.sub(
+            r"(?m)^from threading import .*$",
+            "from threading import Lock, Thread",
+            text,
+            count=1,
+        ) if "from threading import " in text else text.replace("import json\n", "import json\nfrom threading import Lock, Thread\n")
+
+    text = text.replace("        self.lan_discovery_interval = 5\n", "        self.lan_discovery_interval = 10\n")
+    if "self.lan_discovery_interval" in text and "self._lan_discovery_lock = Lock()" not in text:
+        text = text.replace(
+            "        self.lan_discovery_interval = 10\n",
+            "        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n",
+            1,
+        )
 
     if "self.lan_discovery_interval" not in text:
         marker = "            stargate.app.schedule.every(update_interval).minutes.do( self.update_fan_gates_from_api )"
         if marker in text:
             text = text.replace(
                 marker,
-                marker + "\n\n        self.lan_discovery_interval = 5\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
+                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
             )
         else:
             marker = "        self.info_api_url = self.cfg.get(\"subspace_public_api_url\")"
             text = text.replace(
                 marker,
-                marker + "\n\n        self.lan_discovery_interval = 5\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
+                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
             )
 
     discovery_block = '''    def start_lan_gate_discovery(self):
-        discovery_thread = Thread(target=self.update_lan_gates_from_network, daemon=True)
+        if not hasattr(self, "_lan_discovery_lock"):
+            self._lan_discovery_lock = Lock()
+        if not self._lan_discovery_lock.acquire(blocking=False):
+            self.log.log("LAN Gate Discovery: previous scan still running, skipping")
+            return
+
+        def run_scan():
+            try:
+                self.update_lan_gates_from_network()
+            finally:
+                self._lan_discovery_lock.release()
+
+        discovery_thread = Thread(target=run_scan, daemon=True)
         discovery_thread.start()
 
     def update_lan_gates_from_network(self):
@@ -302,8 +327,9 @@ def patch_address_manager():
         found = {}
         hosts = [str(host) for host in network.hosts() if str(host) != local_ip]
 
-        self.log.log(f"LAN Gate Discovery: scanning {network} on port {port}")
-        with ThreadPoolExecutor(max_workers=32) as executor:
+        max_workers = min(8, max(1, len(hosts)))
+        self.log.log(f"LAN Gate Discovery: scanning {network} on port {port} with {max_workers} worker(s)")
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_ip = {
                 executor.submit(self._probe_lan_stargate, ip_addr, port): ip_addr
                 for ip_addr in hosts
@@ -357,7 +383,7 @@ def patch_address_manager():
     def _probe_lan_stargate(self, ip_addr, port):
         url = f"http://{ip_addr}:{port}/get/system_info"
         try:
-            response = requests.get(url, timeout=2.0)
+            response = requests.get(url, timeout=0.7)
             if response.status_code != 200:
                 return None
             data = response.json()
