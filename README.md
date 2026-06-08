@@ -32,6 +32,8 @@ sudo systemctl restart stargate.service
 - Patches LAN gate support into address book/address manager code.
 - Shows LAN Gates in both the original Address Book and Retro Address Book
   when Retro is installed.
+- Colors LAN gates green in the original Address Book.
+- Colors Black Hole addresses red in the original Address Book.
 - Scans the local `/24` network for gates on ports 8080 and 80.
 - Removes stale LAN records after each complete scan.
 - Supports `./langate.sh --scan-only` for later scans.

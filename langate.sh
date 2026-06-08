@@ -496,6 +496,21 @@ def patch_address_book_js():
             '      "fan": "Subspace Gates",\n      "standard": "Standard Gates",',
             '      "fan": "Subspace Gates",\n      "lan": "LAN Gates",\n      "standard": "Standard Gates",',
         )
+    if "address-book-row-black-hole" not in text:
+        text = text.replace(
+            '        address = address_raw.join("");\n\n        $("#presets").append',
+            '        address = address_raw.join("");\n'
+            "        row_classes = 'address-book-row address-book-row-' + value.type + ' col-sm';\n"
+            "        if (value.is_black_hole) {\n"
+            "            row_classes += ' address-book-row-black-hole';\n"
+            "        }\n\n"
+            '        $("#presets").append',
+        )
+        text = text.replace(
+            '\'<div class="address-book-row address-book-row-\'+value.type+\' col-sm " onclick=',
+            '\'<div class="\' + row_classes + \'" onclick=',
+            1,
+        )
     return write_text_if_changed(path, text)
 
 
@@ -635,6 +650,13 @@ def patch_main_css():
     )
     if replacements != 1:
         raise RuntimeError("Unable to set LAN address-book color")
+    if ".address-book-row-black-hole" not in text:
+        text = re.sub(
+            r"(?ms)(\.address-book-row-lan\s*\{\s*background-color:\s*#6BE310\s*;\s*\})",
+            r"\1\n\n.address-book-row-black-hole{\n  background-color: #b30000;\n}",
+            text,
+            count=1,
+        )
     return write_text_if_changed(path, text)
 
 
