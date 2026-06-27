@@ -665,6 +665,29 @@ def patch_retro_address_book_css():
     return write_text_if_changed(path, text)
 
 
+def patch_retro_address_book_cache_bust():
+    path = APP_DIR / "web" / "retro" / "address_book.html"
+    if not path.exists():
+        print("Skipped retro address book cache-bust: retro is not installed")
+        return False
+
+    text = read_text(path)
+    version = f"langate-{STAMP}"
+    text = re.sub(
+        r'href="css/address_book\.css(?:\?v=[^"]*)?"',
+        f'href="css/address_book.css?v={version}"',
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r'src="js/address_book\.js(?:\?v=[^"]*)?"',
+        f'src="js/address_book.js?v={version}"',
+        text,
+        count=1,
+    )
+    return write_text_if_changed(path, text)
+
+
 def patch_main_css():
     path = APP_DIR / "web" / "main.css"
     text = read_text(path)
@@ -697,6 +720,7 @@ def patch_app():
     changed |= patch_retro_address_book_html()
     changed |= patch_retro_address_book_js()
     changed |= patch_retro_address_book_css()
+    changed |= patch_retro_address_book_cache_bust()
 
     for path in (
         APP_DIR / "classes" / "stargate_address_book.py",
