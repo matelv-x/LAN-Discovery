@@ -7,7 +7,7 @@ Adds LAN gate scanning and local address-book integration.
 After a complete scan, records for LAN gates that are no longer visible are
 removed from the local address book.
 
-## Install
+## Install,
 
 Clone or unzip this add-on into `/home/pi`, then run:
 
