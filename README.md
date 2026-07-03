@@ -1,5 +1,7 @@
 # LAN Gates / LAN Discovery
 
+[![Downloads](https://img.shields.io/github/downloads/matelv-x/LAN-Discovery/total?label=downloads)](https://github.com/matelv-x/LAN-Discovery/releases)
+
 Adds LAN gate scanning and local address-book integration.
 
 After a complete scan, records for LAN gates that are no longer visible are
