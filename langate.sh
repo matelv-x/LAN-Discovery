@@ -3,9 +3,9 @@ set -euo pipefail
 
 APP_DIR="${APP_DIR:-/home/pi/sg1_v4}"
 ADDRESS_FILE="${ADDRESS_FILE:-$APP_DIR/config/milkyway-addresses.json}"
-PORTS="${PORTS:-8080 80}"
-TIMEOUT="${TIMEOUT:-0.7}"
-MAX_WORKERS="${MAX_WORKERS:-8}"
+PORTS="${PORTS:-8080 8081 80}"
+TIMEOUT="${TIMEOUT:-3.0}"
+MAX_WORKERS="${MAX_WORKERS:-32}"
 RESTART_SERVICE=1
 PATCH_APP=1
 ORIGINAL_ARGS=("$@")
@@ -24,9 +24,9 @@ This patch gives the original SG1 v4 image LAN-gate support:
 Environment overrides:
   APP_DIR=/home/pi/sg1_v4
   ADDRESS_FILE=/home/pi/sg1_v4/config/milkyway-addresses.json
-  PORTS="8080 80"
-  TIMEOUT=0.7
-  MAX_WORKERS=8
+  PORTS="8080 8081 80"
+  TIMEOUT=3.0
+  MAX_WORKERS=32
 EOF
 }
 
@@ -265,6 +265,8 @@ def patch_address_manager():
         text = text.replace("from ast import literal_eval\n", "from ast import literal_eval\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n")
     if "from ipaddress import ip_network" not in text:
         text = text.replace("from datetime import datetime\n", "from datetime import datetime\nfrom ipaddress import ip_network\n")
+    if "import socket\n" not in text:
+        text = text.replace("import json\n", "import json\nimport socket\n")
     if "from threading import Lock, Thread" not in text:
         text = re.sub(
             r"(?m)^from threading import .*$",
@@ -280,19 +282,25 @@ def patch_address_manager():
             "        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n",
             1,
         )
+    if "self.lan_discovery_interval" in text and "self._lan_gate_misses = {}" not in text:
+        text = text.replace(
+            "        self._lan_discovery_lock = Lock()\n",
+            "        self._lan_discovery_lock = Lock()\n        self._lan_gate_misses = {}\n",
+            1,
+        )
 
     if "self.lan_discovery_interval" not in text:
         marker = "            stargate.app.schedule.every(update_interval).minutes.do( self.update_fan_gates_from_api )"
         if marker in text:
             text = text.replace(
                 marker,
-                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
+                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        self._lan_gate_misses = {}\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
             )
         else:
             marker = "        self.info_api_url = self.cfg.get(\"subspace_public_api_url\")"
             text = text.replace(
                 marker,
-                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
+                marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        self._lan_gate_misses = {}\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
             )
 
     discovery_block = '''    def start_lan_gate_discovery(self):
@@ -323,28 +331,44 @@ def patch_address_manager():
             self.log.log(f"LAN Gate Discovery: invalid local network for {local_ip}: {exc}")
             return {}
 
-        port = self.cfg.get("control_api_server_port")
+        configured_port = self.cfg.get("control_api_server_port")
+        api_ports = sorted({8080, 8081, int(configured_port or 8080)})
+        local_address = self.address_book.get_local_address()
         found = {}
-        hosts = [str(host) for host in network.hosts() if str(host) != local_ip]
+        hosts = [str(host) for host in network.hosts()]
+        jobs = [(ip_addr, port) for ip_addr in hosts for port in api_ports]
 
-        max_workers = min(8, max(1, len(hosts)))
-        self.log.log(f"LAN Gate Discovery: scanning {network} on port {port} with {max_workers} worker(s)")
+        max_workers = min(32, max(1, len(jobs)))
+        self.log.log(
+            f"LAN Gate Discovery: checking {network} on ports "
+            f"{', '.join(str(port) for port in api_ports)}"
+        )
+
+        open_targets = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_ip = {
-                executor.submit(self._probe_lan_stargate, ip_addr, port): ip_addr
-                for ip_addr in hosts
+            future_to_target = {
+                executor.submit(self._is_lan_api_open, ip_addr, port): (ip_addr, port)
+                for ip_addr, port in jobs
             }
-            for future in as_completed(future_to_ip):
-                gate = future.result()
-                if not gate:
-                    continue
+            for future in as_completed(future_to_target):
+                if future.result():
+                    open_targets.append(future_to_target[future])
 
-                name = gate["name"]
-                found[name] = gate
+        if open_targets:
+            with ThreadPoolExecutor(max_workers=min(8, len(open_targets))) as executor:
+                future_to_target = {
+                    executor.submit(self._probe_lan_stargate, ip_addr, port, local_address): (ip_addr, port)
+                    for ip_addr, port in open_targets
+                }
+                for future in as_completed(future_to_target):
+                    gate = future.result()
+                    if gate:
+                        found[gate["name"]] = gate
 
         lan_gates = self.address_book.get_lan_gates()
         changed = False
         for name, gate in found.items():
+            self._lan_gate_misses.pop(name, None)
             for existing_name, existing_gate in list(lan_gates.items()):
                 if existing_name == name:
                     continue
@@ -353,23 +377,36 @@ def patch_address_manager():
                     or existing_gate.get("ip_address") == gate["ip_address"]
                 ):
                     del lan_gates[existing_name]
+                    self._lan_gate_misses.pop(existing_name, None)
                     changed = True
             if lan_gates.get(name) != gate:
                 lan_gates[name] = gate
                 changed = True
 
         stale = []
+        temporarily_missed = []
         for name, gate in list(lan_gates.items()):
             if name in found or gate.get("is_local_gate"):
                 continue
+            misses = self._lan_gate_misses.get(name, 0) + 1
+            self._lan_gate_misses[name] = misses
+            if misses < 3:
+                temporarily_missed.append(f"{name} ({misses}/3)")
+                continue
             del lan_gates[name]
+            self._lan_gate_misses.pop(name, None)
             stale.append(name)
             changed = True
         if changed:
             self.address_book.datastore.set("lan_gates", lan_gates)
+        if temporarily_missed:
+            self.log.log(
+                "LAN Gate Discovery: temporarily missed: "
+                + ", ".join(sorted(temporarily_missed))
+            )
         if stale:
             self.log.log(
-                "LAN Gate Discovery: removed stale records: "
+                "LAN Gate Discovery: removed after 3 missed scans: "
                 + ", ".join(sorted(stale))
             )
 
@@ -380,10 +417,18 @@ def patch_address_manager():
 
         return found
 
-    def _probe_lan_stargate(self, ip_addr, port):
+    @staticmethod
+    def _is_lan_api_open(ip_addr, port):
+        try:
+            with socket.create_connection((ip_addr, port), timeout=0.35):
+                return True
+        except OSError:
+            return False
+
+    def _probe_lan_stargate(self, ip_addr, port, local_address=None):
         url = f"http://{ip_addr}:{port}/get/system_info"
         try:
-            response = requests.get(url, timeout=0.7)
+            response = requests.get(url, timeout=(0.6, 3.0))
             if response.status_code != 200:
                 return None
             data = response.json()
@@ -393,14 +438,20 @@ def patch_address_manager():
         gate_address = data.get("local_stargate_address")
         if not isinstance(gate_address, list) or not 6 <= len(gate_address) <= 9:
             return None
-        if gate_address == self.address_book.get_local_address():
+        if local_address and gate_address == local_address:
             return None
 
         gate_name = data.get("gate_name") or f"Stargate {ip_addr}"
+        lan_ip = data.get("lan_ip_address") or ip_addr
+        subspace_port = data.get("subspace_port")
+        if not isinstance(subspace_port, int):
+            subspace_port = 3838 + max(0, int(port) - 8080)
         return {
             "name": str(gate_name),
             "gate_address": gate_address,
-            "ip_address": ip_addr,
+            "ip_address": lan_ip,
+            "api_port": int(port),
+            "subspace_port": int(subspace_port),
             "is_gate_online": "1",
             "is_black_hole": False,
             "type": "lan",
@@ -411,10 +462,11 @@ def patch_address_manager():
         for function_name in (
             "start_lan_gate_discovery",
             "update_lan_gates_from_network",
+            "_is_lan_api_open",
             "_probe_lan_stargate",
         ):
             match = re.search(
-                rf"(?ms)^    def {function_name}\(.*?(?=^    def |\Z)",
+                rf"(?ms)^    def {function_name}\(.*?(?=^    (?:def |@staticmethod)|\Z)",
                 discovery_block,
             )
             if not match:
@@ -422,6 +474,12 @@ def patch_address_manager():
                     f"Unable to extract generated function {function_name}"
                 )
             text, _ = replace_function(text, function_name, match.group(0).rstrip())
+
+    text = re.sub(
+        r"(?m)(?:^    @staticmethod\n\s*){2,}",
+        "    @staticmethod\n",
+        text,
+    )
 
     get_ip = '''    def get_ip_from_stargate_address(self, stargate_address):
         """
@@ -798,6 +856,12 @@ def get_field(data, names):
 
 def probe(ip_addr):
     for port in PORTS:
+        try:
+            with socket.create_connection((ip_addr, port), timeout=0.35):
+                pass
+        except OSError:
+            continue
+
         for endpoint in ENDPOINTS:
             url = f"http://{ip_addr}:{port}{endpoint}"
             try:
@@ -996,12 +1060,8 @@ def scan_and_update():
 
     if not found:
         print("No LAN Stargates found.")
-        for name, gate in list(lan_gates.items()):
-            if gate.get("is_local_gate"):
-                continue
-            del lan_gates[name]
-            changed = True
-            print(f"- Removed stale LAN gate: {name} | {gate.get('ip_address', 'unknown')}")
+        if lan_gates:
+            print("Existing LAN records were preserved; runtime discovery removes a gate only after 3 missed scans.")
         if changed:
             save_lan_gates(config, lan_gates)
             return
@@ -1033,14 +1093,12 @@ def scan_and_update():
         online_names.add(gate["name"])
         print(f"- {action}: {gate['name']} | {gate['ip_address']} | {gate['gate_address']}")
 
-    for name, gate in list(lan_gates.items()):
-        if name in online_names:
-            continue
-        if gate.get("is_local_gate"):
-            continue
-        del lan_gates[name]
-        changed = True
-        print(f"- Removed stale LAN gate: {name} | {gate.get('ip_address', 'unknown')}")
+    preserved = [
+        name for name, gate in lan_gates.items()
+        if name not in online_names and not gate.get("is_local_gate")
+    ]
+    if preserved:
+        print("- Preserved until runtime confirms 3 missed scans: " + ", ".join(sorted(preserved)))
 
     if not changed:
         print()
