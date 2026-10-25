@@ -1122,7 +1122,9 @@ if __name__ == "__main__":
 PY
 
 if [ "$RESTART_SERVICE" = "1" ]; then
-    if command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files stargate.service >/dev/null 2>&1; then
+    if [ "${STARGATE_ADDON_NO_RESTART:-0}" = "1" ]; then
+        echo "Stargate restart deferred by add-on manager."
+    elif command -v systemctl >/dev/null 2>&1 && systemctl list-unit-files stargate.service >/dev/null 2>&1; then
         echo
         echo "Restarting stargate.service"
         if [ "$(id -u)" -eq 0 ]; then

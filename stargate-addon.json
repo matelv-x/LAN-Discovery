@@ -1,0 +1,11 @@
+{
+  "maintenance_contract": 1,
+  "id": "lan-discovery",
+  "name": "LAN Discovery",
+  "repository": "matelv-x/LAN-Discovery",
+  "platforms": ["v4"],
+  "detect": {"any": [{"path": "classes/stargate_address_book.py", "contains": "lan_gates"}, {"path": "web/retro/js/address_book.js", "contains": "lan"}]},
+  "install": {"argv": ["./langate.sh"], "env": {"APP_DIR": "{sg1_root}"}, "timeout": 900},
+  "uninstall": {"argv": ["./restore-langate.sh"], "env": {"APP_DIR": "{sg1_root}"}, "timeout": 900},
+  "restart_required": true
+}

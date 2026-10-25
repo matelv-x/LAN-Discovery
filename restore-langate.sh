@@ -29,7 +29,9 @@ restore_latest() {
 echo "Restoring LAN Gates backups in:"
 echo "  $APP_DIR"
 
-sudo systemctl stop stargate.service || true
+if [ "${STARGATE_ADDON_NO_RESTART:-0}" != "1" ]; then
+  sudo systemctl stop stargate.service || true
+fi
 
 restore_latest "classes/stargate_address_book.py"
 restore_latest "classes/stargate_address_manager.py"
@@ -43,6 +45,10 @@ restore_latest "config/milkyway-addresses.json"
 
 sudo find "$APP_DIR/classes" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 sudo chown -R pi:pi "$APP_DIR"
-sudo systemctl start stargate.service
+if [ "${STARGATE_ADDON_NO_RESTART:-0}" != "1" ]; then
+  sudo systemctl start stargate.service
+else
+  echo "Stargate restart deferred by add-on manager."
+fi
 
 echo "=== LAN GATES RESTORE COMPLETE ==="
