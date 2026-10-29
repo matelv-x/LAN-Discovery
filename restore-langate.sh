@@ -12,36 +12,20 @@ if ! sudo -n true 2>/dev/null; then
   sudo true
 fi
 
-restore_latest() {
-  local rel="$1"
-  local pattern="$APP_DIR/$rel.bak-langate-*"
-  local backup
-  backup="$(ls -t $pattern 2>/dev/null | head -n 1 || true)"
-  if [ -n "$backup" ] && [ -f "$backup" ]; then
-    sudo rm -f "$APP_DIR/$rel"
-    sudo cp -a "$backup" "$APP_DIR/$rel"
-    echo "Restored: $rel"
-  else
-    echo "Skipped, no backup found: $rel"
-  fi
-}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-echo "Restoring LAN Gates backups in:"
+echo "Surgically removing LAN Discovery code in:"
 echo "  $APP_DIR"
 
 if [ "${STARGATE_ADDON_NO_RESTART:-0}" != "1" ]; then
   sudo systemctl stop stargate.service || true
 fi
 
-restore_latest "classes/stargate_address_book.py"
-restore_latest "classes/stargate_address_manager.py"
-restore_latest "classes/web_server.py"
-restore_latest "web/js/address_book.js"
-restore_latest "web/main.css"
-restore_latest "web/retro/address_book.html"
-restore_latest "web/retro/js/address_book.js"
-restore_latest "web/retro/css/address_book.css"
-restore_latest "config/milkyway-addresses.json"
+sudo python3 "$SCRIPT_DIR/surgical_restore.py" "$APP_DIR" "$SCRIPT_DIR/langate.sh"
+sudo python3 -m py_compile \
+  "$APP_DIR/classes/stargate_address_book.py" \
+  "$APP_DIR/classes/stargate_address_manager.py" \
+  "$APP_DIR/classes/web_server.py"
 
 sudo find "$APP_DIR/classes" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 sudo chown -R pi:pi "$APP_DIR"
