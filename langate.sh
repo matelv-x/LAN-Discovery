@@ -127,6 +127,15 @@ def write_text_if_changed(path, text):
     return True
 
 
+def function_block(text, name):
+    pattern = re.compile(
+        rf"(?ms)^(?:    @[^\n]+\n)*    def {re.escape(name)}\(.*?"
+        rf"(?=^    (?:@|def )|^class |\Z)"
+    )
+    match = pattern.search(text)
+    return match.group(0) if match else None
+
+
 def replace_function(text, name, new_body):
     pattern = re.compile(rf"(?ms)^    def {re.escape(name)}\(.*?(?=^    @|^    def |^class |\Z)")
     if not pattern.search(text):
@@ -260,6 +269,16 @@ def patch_address_book():
 def patch_address_manager():
     path = APP_DIR / "classes" / "stargate_address_manager.py"
     text = read_text(path)
+    protected = {
+        name: function_block(text, name)
+        for name in ("valid_planet", "is_black_hole")
+    }
+    missing = [name for name, block in protected.items() if block is None]
+    if missing:
+        raise RuntimeError(
+            "Refusing to install LAN Discovery: required core method(s) missing: "
+            + ", ".join(missing)
+        )
 
     if "from concurrent.futures import ThreadPoolExecutor, as_completed" not in text:
         text = text.replace("from ast import literal_eval\n", "from ast import literal_eval\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n")
@@ -549,6 +568,16 @@ def patch_address_manager():
         )
         if replacements != 1:
             raise RuntimeError("Unable to add LAN address-book summary category")
+
+    changed_core = [
+        name for name, block in protected.items()
+        if function_block(text, name) != block
+    ]
+    if changed_core:
+        raise RuntimeError(
+            "Refusing to install LAN Discovery: core method(s) changed: "
+            + ", ".join(changed_core)
+        )
 
     return write_text_if_changed(path, text)
 

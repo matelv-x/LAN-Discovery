@@ -41,6 +41,10 @@ PYTHON_FUNCTIONS = {
     ),
 }
 
+PROTECTED_METHODS = {
+    "classes/stargate_address_manager.py": ("valid_planet", "is_black_hole"),
+}
+
 
 def fail(message):
     raise SystemExit(f"ERROR: {message}")
@@ -74,6 +78,17 @@ def method_pattern(name):
         rf"(?ms)^(?:    @[^\n]+\n)*    def {re.escape(name)}\(.*?"
         rf"(?=^    (?:@|def )|^class |\Z)"
     )
+
+
+def verify_protected_methods(relative, before, after):
+    for name in PROTECTED_METHODS.get(relative, ()):
+        pattern = method_pattern(name)
+        original = pattern.search(before)
+        candidate = pattern.search(after)
+        if original is None:
+            fail(f"required core method missing before uninstall: {relative}:{name}")
+        if candidate is None or candidate.group(0) != original.group(0):
+            fail(f"refusing to alter core method during uninstall: {relative}:{name}")
 
 
 def surgical_python_fallback(relative, current, backup):
@@ -175,6 +190,13 @@ def main():
                 prepared[rel] = result.stdout
         if conflicts:
             fail("surgical merge conflict; no files changed: " + ", ".join(conflicts))
+
+        for rel, content in prepared.items():
+            verify_protected_methods(
+                rel,
+                live[rel].read_text(encoding="utf-8"),
+                content,
+            )
 
         for rel, content in prepared.items():
             live[rel].write_text(content, encoding="utf-8")

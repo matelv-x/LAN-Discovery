@@ -22,6 +22,7 @@ if [ "${STARGATE_ADDON_NO_RESTART:-0}" != "1" ]; then
 fi
 
 sudo python3 "$SCRIPT_DIR/surgical_restore.py" "$APP_DIR" "$SCRIPT_DIR/langate.sh"
+sudo python3 "$SCRIPT_DIR/clean_residue.py" "$APP_DIR"
 sudo python3 -m py_compile \
   "$APP_DIR/classes/stargate_address_book.py" \
   "$APP_DIR/classes/stargate_address_manager.py" \
