@@ -282,8 +282,17 @@ def patch_address_manager():
 
     if "from concurrent.futures import ThreadPoolExecutor, as_completed" not in text:
         text = text.replace("from ast import literal_eval\n", "from ast import literal_eval\nfrom concurrent.futures import ThreadPoolExecutor, as_completed\n")
-    if "from ipaddress import ip_network" not in text:
-        text = text.replace("from datetime import datetime\n", "from datetime import datetime\nfrom ipaddress import ip_network\n")
+    if "import ipaddress as lan_discovery_ipaddress" not in text:
+        text, import_count = re.subn(
+            r"(?m)^(from datetime import [^\n]+\n)",
+            r"\1import ipaddress as lan_discovery_ipaddress\n",
+            text,
+            count=1,
+        )
+        if import_count != 1:
+            raise RuntimeError(
+                "Refusing to install LAN Discovery: datetime import anchor is missing"
+            )
     if "import socket\n" not in text:
         text = text.replace("import json\n", "import json\nimport socket\n")
     if "from threading import Lock, Thread" not in text:
@@ -345,7 +354,7 @@ def patch_address_manager():
             return {}
 
         try:
-            network = ip_network(f"{local_ip}/24", strict=False)
+            network = lan_discovery_ipaddress.ip_network(f"{local_ip}/24", strict=False)
         except ValueError as exc:
             self.log.log(f"LAN Gate Discovery: invalid local network for {local_ip}: {exc}")
             return {}
