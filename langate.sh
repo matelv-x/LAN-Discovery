@@ -382,6 +382,7 @@ def patch_address_manager():
                 if future.result():
                     open_targets.append(future_to_target[future])
 
+        failed_targets = []
         if open_targets:
             with ThreadPoolExecutor(max_workers=min(8, len(open_targets))) as executor:
                 future_to_target = {
@@ -392,6 +393,25 @@ def patch_address_manager():
                     gate = future.result()
                     if gate:
                         found[gate["name"]] = gate
+                    else:
+                        failed_targets.append(future_to_target[future])
+
+        # Multiple IP aliases can reach the same single-threaded Stargate API.
+        # Concurrent system-info requests may therefore queue long enough to
+        # exceed the first read timeout even though the gate is healthy. Retry
+        # only the open targets that failed, one at a time, after the concurrent
+        # pass has drained so a temporary queue cannot hide a LAN gate.
+        recovered = []
+        for ip_addr, port in sorted(set(failed_targets)):
+            gate = self._probe_lan_stargate(ip_addr, port, local_address)
+            if gate:
+                found[gate["name"]] = gate
+                recovered.append(f'{gate["name"]}@{ip_addr}:{port}')
+        if recovered:
+            self.log.log(
+                "LAN Gate Discovery: sequential retry recovered: "
+                + ", ".join(sorted(recovered))
+            )
 
         lan_gates = self.address_book.get_lan_gates()
         changed = False
