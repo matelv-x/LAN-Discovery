@@ -87,6 +87,7 @@ import py_compile
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import time
 import urllib.request
@@ -114,6 +115,23 @@ def read_text(path):
     return path.read_text(encoding="utf-8")
 
 
+def atomic_write_text(path, text):
+    """Replace a text file atomically while preserving its mode and owner."""
+    temporary = path.with_name(f".{path.name}.langate-{os.getpid()}.tmp")
+    original = path.stat() if path.exists() else None
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        if original is not None:
+            os.chmod(temporary, stat.S_IMODE(original.st_mode))
+            try:
+                os.chown(temporary, original.st_uid, original.st_gid)
+            except PermissionError:
+                pass
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def write_text_if_changed(path, text):
     old = path.read_text(encoding="utf-8") if path.exists() else ""
     if old == text:
@@ -122,7 +140,7 @@ def write_text_if_changed(path, text):
     if path.exists():
         shutil.copy2(path, backup)
         print(f"Backup: {backup}")
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
     print(f"Patched: {path}")
     return True
 
@@ -168,7 +186,7 @@ def ensure_address_config():
         }
         backup = ADDRESS_FILE.with_suffix(ADDRESS_FILE.suffix + f".bak-langate-{STAMP}")
         shutil.copy2(ADDRESS_FILE, backup)
-        ADDRESS_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+        atomic_write_text(ADDRESS_FILE, json.dumps(config, indent=4))
         print(f"Added lan_gates config: {ADDRESS_FILE}")
         print(f"Backup: {backup}")
 
@@ -331,7 +349,23 @@ def patch_address_manager():
                 marker + "\n\n        self.lan_discovery_interval = 10\n        self._lan_discovery_lock = Lock()\n        self._lan_gate_misses = {}\n        stargate.app.schedule.every(self.lan_discovery_interval).minutes.do(self.start_lan_gate_discovery)\n        self.start_lan_gate_discovery()",
             )
 
-    discovery_block = '''    def start_lan_gate_discovery(self):
+    discovery_block = '''    @staticmethod
+    def _valid_lan_gate_address(address):
+        if not isinstance(address, list) or not 6 <= len(address) <= 9:
+            return None
+        if any(type(symbol) is not int or not 1 <= symbol <= 39 for symbol in address):
+            return None
+        return list(address)
+
+    @staticmethod
+    def _safe_lan_gate_name(name, ip_addr):
+        value = str(name or '').strip()
+        if (not value or len(value) > 80
+                or any(ord(character) < 32 or ord(character) == 127 for character in value)):
+            return f"Stargate {ip_addr}"
+        return value
+
+    def start_lan_gate_discovery(self):
         if not hasattr(self, "_lan_discovery_lock"):
             self._lan_discovery_lock = Lock()
         if not self._lan_discovery_lock.acquire(blocking=False):
@@ -483,16 +517,24 @@ def patch_address_manager():
         except (requests.RequestException, ValueError, json.JSONDecodeError):
             return None
 
-        gate_address = data.get("local_stargate_address")
-        if not isinstance(gate_address, list) or not 6 <= len(gate_address) <= 9:
+        gate_address = self._valid_lan_gate_address(data.get("local_stargate_address"))
+        if gate_address is None:
             return None
         if local_address and gate_address == local_address:
             return None
 
-        gate_name = data.get("gate_name") or f"Stargate {ip_addr}"
-        lan_ip = data.get("lan_ip_address") or ip_addr
+        gate_name = self._safe_lan_gate_name(data.get("gate_name"), ip_addr)
+        advertised_ip = str(data.get("lan_ip_address") or '').strip()
+        if advertised_ip and advertised_ip != ip_addr:
+            self.log.log(
+                f"LAN Gate Discovery: {gate_name} advertised {advertised_ip}; "
+                f"using probed address {ip_addr}"
+            )
+        # The successfully probed address is authoritative.  A gate may retain
+        # an old configured LAN address after DHCP or interface changes.
+        lan_ip = ip_addr
         subspace_port = data.get("subspace_port")
-        if not isinstance(subspace_port, int):
+        if type(subspace_port) is not int or not 1 <= subspace_port <= 65535:
             subspace_port = 3838 + max(0, int(port) - 8080)
         return {
             "name": str(gate_name),
@@ -507,7 +549,14 @@ def patch_address_manager():
     if "def start_lan_gate_discovery" not in text:
         text, _ = insert_before_function(text, "valid_planet", discovery_block)
     else:
+        static_helpers = {
+            "_valid_lan_gate_address",
+            "_safe_lan_gate_name",
+            "_is_lan_api_open",
+        }
         for function_name in (
+            "_valid_lan_gate_address",
+            "_safe_lan_gate_name",
             "start_lan_gate_discovery",
             "update_lan_gates_from_network",
             "_is_lan_api_open",
@@ -521,7 +570,16 @@ def patch_address_manager():
                 raise RuntimeError(
                     f"Unable to extract generated function {function_name}"
                 )
-            text, _ = replace_function(text, function_name, match.group(0).rstrip())
+            method_body = match.group(0).rstrip()
+            text, replaced = replace_function(text, function_name, method_body)
+            if not replaced:
+                if function_name in static_helpers:
+                    method_body = "    @staticmethod\n" + method_body
+                text, inserted = insert_before_function(text, "valid_planet", method_body)
+                if not inserted:
+                    raise RuntimeError(
+                        f"Unable to add generated function {function_name}"
+                    )
 
     text = re.sub(
         r"(?m)(?:^    @staticmethod\n\s*){2,}",
@@ -536,9 +594,25 @@ def patch_address_manager():
         Internet/Subspace and does not get overridden by public records.
         """
         if len(stargate_address) > 1:
-            for stargate_config in self.address_book.get_lan_gates().values():
-                if stargate_address[0:2] == stargate_config['gate_address'][0:2]:
-                    return stargate_config['ip_address']
+            dialed = list(stargate_address)
+            if len(dialed) >= 6:
+                exact = []
+                compatible = []
+                for stargate_config in self.address_book.get_lan_gates().values():
+                    stored = stargate_config.get('gate_address', [])
+                    if stored == dialed or (len(dialed) > len(stored) and dialed[:len(stored)] == stored):
+                        exact.append(stargate_config)
+                    elif len(dialed) < len(stored) and stored[:len(dialed)] == dialed:
+                        compatible.append(stargate_config)
+
+                matches = exact or compatible
+                if len(matches) == 1:
+                    return matches[0]['ip_address']
+                if len(matches) > 1:
+                    self.log.log(
+                        f'Ambiguous LAN address prefix {dialed}; waiting for more symbols'
+                    )
+                    return None
 
             for stargate_config in self.address_book.get_fan_gates().values():
                 if stargate_address[0:2] == stargate_config['gate_address'][0:2]:
@@ -891,16 +965,27 @@ def fetch_json(url):
 
 
 def normalize_address(address):
+    parsed = None
     if isinstance(address, list):
-        return address
-    if isinstance(address, str):
+        parsed = address
+    elif isinstance(address, str):
         try:
             parsed = json.loads(address)
-            if isinstance(parsed, list):
-                return parsed
         except Exception:
             return []
-    return []
+    if not isinstance(parsed, list) or not 6 <= len(parsed) <= 9:
+        return []
+    if any(type(symbol) is not int or not 1 <= symbol <= 39 for symbol in parsed):
+        return []
+    return parsed
+
+
+def safe_gate_name(name, ip_addr):
+    value = str(name or "").strip()
+    if (not value or len(value) > 80
+            or any(ord(character) < 32 or ord(character) == 127 for character in value)):
+        return f"Stargate {ip_addr}"
+    return value
 
 
 def get_field(data, names):
@@ -937,7 +1022,7 @@ def probe(ip_addr):
                 continue
 
             return {
-                "name": str(name or f"Stargate {ip_addr}"),
+                "name": safe_gate_name(name, ip_addr),
                 "gate_address": address,
                 "ip_address": ip_addr,
                 "is_gate_online": "1",
@@ -1083,7 +1168,7 @@ def save_lan_gates(config, lan_gates):
     backup = ADDRESS_FILE.with_suffix(ADDRESS_FILE.suffix + f".bak-langate-{STAMP}")
     shutil.copy2(ADDRESS_FILE, backup)
     set_config_value(config, "lan_gates", lan_gates)
-    ADDRESS_FILE.write_text(json.dumps(config, indent=4), encoding="utf-8")
+    atomic_write_text(ADDRESS_FILE, json.dumps(config, indent=4))
 
     print()
     print(f"Saved: {ADDRESS_FILE}")

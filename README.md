@@ -40,6 +40,13 @@ sudo systemctl restart stargate.service
 - Uses a guarded, low-worker LAN scan so Pi 3 systems do not stack scanner threads.
 - Removes stale LAN records after each complete scan.
 - Supports `./langate.sh --scan-only` for later scans.
+- Treats the IP address that answered the probe as authoritative, preventing a
+  stale address advertised by a gate from poisoning the local route.
+- Accepts standard SG1 addresses containing 6 to 9 symbols. Four-symbol custom
+  protocols are intentionally outside this add-on's scope.
+- Uses exact or uniquely resolvable address prefixes for LAN routing instead of
+  silently choosing the first colliding two-symbol prefix. LAN resolution does
+  not begin before the sixth symbol; Fan/Subspace routing remains unchanged.
 
 ## Attribution and originality
 

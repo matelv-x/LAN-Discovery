@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -34,12 +35,29 @@ PYTHON_FUNCTIONS = {
         "get_lan_gates", "get_lan_gate_by_address", "set_lan_gate",
     ),
     "classes/stargate_address_manager.py": (
-        "__init__", "start_lan_gate_discovery", "update_lan_gates_from_network",
+        "__init__", "_valid_lan_gate_address", "_safe_lan_gate_name",
+        "start_lan_gate_discovery", "update_lan_gates_from_network",
         "_is_lan_api_open", "_probe_lan_stargate", "get_ip_from_stargate_address",
         "get_gate_entry_from_ip", "get_stargate_address_from_ip",
         "get_planet_name_from_ip", "get_summary_from_book",
     ),
 }
+
+
+def atomic_write_text(path, text):
+    temporary = path.with_name(f".{path.name}.lan-restore-{os.getpid()}.tmp")
+    original = path.stat()
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.chmod(temporary, stat.S_IMODE(original.st_mode))
+        try:
+            os.chown(temporary, original.st_uid, original.st_gid)
+        except PermissionError:
+            pass
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
 
 PROTECTED_METHODS = {
     "classes/stargate_address_manager.py": ("valid_planet", "is_black_hole"),
@@ -199,7 +217,7 @@ def main():
             )
 
         for rel, content in prepared.items():
-            live[rel].write_text(content, encoding="utf-8")
+            atomic_write_text(live[rel], content)
             print(f"Surgically cleaned: {rel}")
 
         for rel in TARGETS:

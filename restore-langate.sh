@@ -29,7 +29,6 @@ sudo python3 -m py_compile \
   "$APP_DIR/classes/web_server.py"
 
 sudo find "$APP_DIR/classes" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-sudo chown -R pi:pi "$APP_DIR"
 if [ "${STARGATE_ADDON_NO_RESTART:-0}" != "1" ]; then
   sudo systemctl start stargate.service
 else

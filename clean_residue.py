@@ -1,19 +1,40 @@
 #!/usr/bin/env python3
 """Remove only residual LAN Discovery code after the three-way uninstall."""
 
+import os
 import re
+import stat
 import sys
 from pathlib import Path
 
 
 PROTECTED_METHODS = ("valid_planet", "is_black_hole")
 LAN_METHODS = (
+    "_valid_lan_gate_address",
+    "_safe_lan_gate_name",
     "start_lan_gate_discovery",
     "update_lan_gates_from_network",
     "_is_lan_api_open",
     "_probe_lan_stargate",
     "is_lan_stargate",
 )
+
+
+def atomic_write_text(path, text):
+    temporary = path.with_name(f".{path.name}.lan-clean-{os.getpid()}.tmp")
+    original = path.stat()
+    try:
+        temporary.write_text(text, encoding="utf-8")
+        os.chmod(temporary, stat.S_IMODE(original.st_mode))
+        try:
+            os.chown(temporary, original.st_uid, original.st_gid)
+        except PermissionError:
+            pass
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 RESIDUE_MARKERS = (
     "get_lan_gates",
     "get_fan_and_lan_addresses",
@@ -136,7 +157,7 @@ def clean_manager(path):
             f"ERROR: LAN manager residue remains in {path}: {remaining}"
         )
     compile(text, str(path), "exec")
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
 
 
 def clean_web_server(path):
@@ -159,7 +180,7 @@ def clean_web_server(path):
     if "get_lan_gates" in text or "get_fan_and_lan_addresses" in text:
         raise SystemExit(f"ERROR: LAN web-server residue remains in {path}")
     compile(text, str(path), "exec")
-    path.write_text(text, encoding="utf-8")
+    atomic_write_text(path, text)
 
 
 def main():
