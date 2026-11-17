@@ -436,8 +436,14 @@ def patch_address_manager():
         # only the open targets that failed, one at a time, after the concurrent
         # pass has drained so a temporary queue cannot hide a LAN gate.
         recovered = []
+        if failed_targets:
+            # A timed-out request may still be finishing inside a slower gate.
+            # Let that handler drain before issuing the serialized recovery pass.
+            time.sleep(3.5)
         for ip_addr, port in sorted(set(failed_targets)):
-            gate = self._probe_lan_stargate(ip_addr, port, local_address)
+            gate = self._probe_lan_stargate(
+                ip_addr, port, local_address, read_timeout=8.0
+            )
             if gate:
                 found[gate["name"]] = gate
                 recovered.append(f'{gate["name"]}@{ip_addr}:{port}')
@@ -467,13 +473,16 @@ def patch_address_manager():
 
         stale = []
         temporarily_missed = []
+        stale_miss_limit = 6
         for name, gate in list(lan_gates.items()):
             if name in found or gate.get("is_local_gate"):
                 continue
             misses = self._lan_gate_misses.get(name, 0) + 1
             self._lan_gate_misses[name] = misses
-            if misses < 3:
-                temporarily_missed.append(f"{name} ({misses}/3)")
+            if misses < stale_miss_limit:
+                temporarily_missed.append(
+                    f"{name} ({misses}/{stale_miss_limit})"
+                )
                 continue
             del lan_gates[name]
             self._lan_gate_misses.pop(name, None)
@@ -488,7 +497,7 @@ def patch_address_manager():
             )
         if stale:
             self.log.log(
-                "LAN Gate Discovery: removed after 3 missed scans: "
+                f"LAN Gate Discovery: removed after {stale_miss_limit} missed scans: "
                 + ", ".join(sorted(stale))
             )
 
@@ -507,10 +516,11 @@ def patch_address_manager():
         except OSError:
             return False
 
-    def _probe_lan_stargate(self, ip_addr, port, local_address=None):
+    def _probe_lan_stargate(self, ip_addr, port, local_address=None,
+                            read_timeout=3.0):
         url = f"http://{ip_addr}:{port}/get/system_info"
         try:
-            response = requests.get(url, timeout=(0.6, 3.0))
+            response = requests.get(url, timeout=(0.6, read_timeout))
             if response.status_code != 200:
                 return None
             data = response.json()

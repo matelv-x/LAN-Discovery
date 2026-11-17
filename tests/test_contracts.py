@@ -77,6 +77,12 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("matches = exact or compatible", self.source)
         self.assertIn("Ambiguous LAN address prefix", self.source)
 
+    def test_slow_gate_recovery_does_not_remove_transient_misses(self):
+        self.assertIn("time.sleep(3.5)", self.source)
+        self.assertIn("read_timeout=8.0", self.source)
+        self.assertIn("stale_miss_limit = 6", self.source)
+        self.assertIn("timeout=(0.6, read_timeout)", self.source)
+
     def test_stellar_tracks_every_shared_file(self):
         metadata = json.loads((ROOT / "stargate-addon.json").read_text(encoding="utf-8"))
         expected = {
