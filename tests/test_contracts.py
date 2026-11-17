@@ -79,7 +79,9 @@ class InstallerContractTests(unittest.TestCase):
 
     def test_slow_gate_recovery_does_not_remove_transient_misses(self):
         self.assertIn("time.sleep(3.5)", self.source)
-        self.assertIn("read_timeout=8.0", self.source)
+        self.assertIn("known_failed_targets", self.source)
+        self.assertIn("(ip_addr, port, 8.0)", self.source)
+        self.assertIn("(ip_addr, port, 3.0)", self.source)
         self.assertIn("stale_miss_limit = 6", self.source)
         self.assertIn("timeout=(0.6, read_timeout)", self.source)
 

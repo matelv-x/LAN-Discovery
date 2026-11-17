@@ -38,7 +38,8 @@ sudo systemctl restart stargate.service
 - Colors Black Hole addresses red in the original Address Book.
 - Scans the local `/24` network for gates on ports 8080 and 80.
 - Uses a guarded, low-worker LAN scan so Pi 3 systems do not stack scanner threads.
-- Gives slow gates a delayed eight-second recovery probe after the fast scan.
+- Gives already-known slow gates a delayed eight-second recovery probe after
+  the fast scan without extending retries for unrelated LAN services.
 - Removes stale LAN records only after six consecutive missed scans.
 - Supports `./langate.sh --scan-only` for later scans.
 - Treats the IP address that answered the probe as authoritative, preventing a

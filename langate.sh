@@ -435,14 +435,34 @@ def patch_address_manager():
         # exceed the first read timeout even though the gate is healthy. Retry
         # only the open targets that failed, one at a time, after the concurrent
         # pass has drained so a temporary queue cannot hide a LAN gate.
+        lan_gates = self.address_book.get_lan_gates()
+        known_gate_ips = {
+            str(gate.get("ip_address"))
+            for gate in lan_gates.values()
+            if gate.get("ip_address")
+        }
+        failed_targets = sorted(set(failed_targets))
+        known_failed_targets = [
+            target for target in failed_targets if target[0] in known_gate_ips
+        ]
+        other_failed_targets = [
+            target for target in failed_targets if target[0] not in known_gate_ips
+        ]
         recovered = []
         if failed_targets:
             # A timed-out request may still be finishing inside a slower gate.
             # Let that handler drain before issuing the serialized recovery pass.
             time.sleep(3.5)
-        for ip_addr, port in sorted(set(failed_targets)):
+        recovery_targets = [
+            (ip_addr, port, 8.0)
+            for ip_addr, port in known_failed_targets
+        ] + [
+            (ip_addr, port, 3.0)
+            for ip_addr, port in other_failed_targets
+        ]
+        for ip_addr, port, read_timeout in recovery_targets:
             gate = self._probe_lan_stargate(
-                ip_addr, port, local_address, read_timeout=8.0
+                ip_addr, port, local_address, read_timeout=read_timeout
             )
             if gate:
                 found[gate["name"]] = gate
@@ -453,7 +473,6 @@ def patch_address_manager():
                 + ", ".join(sorted(recovered))
             )
 
-        lan_gates = self.address_book.get_lan_gates()
         changed = False
         for name, gate in found.items():
             self._lan_gate_misses.pop(name, None)
