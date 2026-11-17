@@ -83,6 +83,7 @@ def clean_manager(path):
     for line in (
         "from concurrent.futures import ThreadPoolExecutor, as_completed\n",
         "import ipaddress as lan_discovery_ipaddress\n",
+        "import time as lan_discovery_time\n",
         "from ipaddress import ip_network\n",
         "import socket\n",
         "from threading import Lock, Thread\n",

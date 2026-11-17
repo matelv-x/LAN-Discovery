@@ -313,6 +313,12 @@ def patch_address_manager():
             )
     if "import socket\n" not in text:
         text = text.replace("import json\n", "import json\nimport socket\n")
+    if "import time as lan_discovery_time\n" not in text:
+        text = text.replace(
+            "import socket\n",
+            "import socket\nimport time as lan_discovery_time\n",
+            1,
+        )
     if "from threading import Lock, Thread" not in text:
         text = re.sub(
             r"(?m)^from threading import .*$",
@@ -452,7 +458,7 @@ def patch_address_manager():
         if failed_targets:
             # A timed-out request may still be finishing inside a slower gate.
             # Let that handler drain before issuing the serialized recovery pass.
-            time.sleep(3.5)
+            lan_discovery_time.sleep(3.5)
         recovery_targets = [
             (ip_addr, port, 8.0)
             for ip_addr, port in known_failed_targets

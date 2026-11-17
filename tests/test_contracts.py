@@ -78,7 +78,8 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("Ambiguous LAN address prefix", self.source)
 
     def test_slow_gate_recovery_does_not_remove_transient_misses(self):
-        self.assertIn("time.sleep(3.5)", self.source)
+        self.assertIn("import time as lan_discovery_time", self.source)
+        self.assertIn("lan_discovery_time.sleep(3.5)", self.source)
         self.assertIn("known_failed_targets", self.source)
         self.assertIn("(ip_addr, port, 8.0)", self.source)
         self.assertIn("(ip_addr, port, 3.0)", self.source)
