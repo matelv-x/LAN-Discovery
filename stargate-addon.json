@@ -1,5 +1,5 @@
 {
-  "maintenance_contract": 2,
+  "maintenance_contract": 1,
   "uninstall_contract": 2,
   "id": "lan-discovery",
   "name": "LAN Discovery",
