@@ -38,6 +38,7 @@ PYTHON_FUNCTIONS = {
         "__init__", "_valid_lan_gate_address", "_safe_lan_gate_name",
         "start_lan_gate_discovery", "update_lan_gates_from_network",
         "_is_lan_api_open", "_probe_lan_stargate", "get_ip_from_stargate_address",
+        "is_fan_made_stargate",
         "get_gate_entry_from_ip", "get_stargate_address_from_ip",
         "get_planet_name_from_ip", "get_summary_from_book",
     ),

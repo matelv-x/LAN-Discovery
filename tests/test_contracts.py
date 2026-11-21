@@ -73,9 +73,21 @@ class InstallerContractTests(unittest.TestCase):
     def test_runtime_uses_probed_ip_and_unique_prefix_routing(self):
         self.assertIn("lan_ip = ip_addr", self.source)
         self.assertNotIn('lan_ip = data.get("lan_ip_address")', self.source)
+        self.assertIn("def remember_gate(gate):", self.source)
+        self.assertIn("candidate_key < current_key", self.source)
         self.assertIn("if len(dialed) >= 6:", self.source)
         self.assertIn("matches = exact or compatible", self.source)
         self.assertIn("Ambiguous LAN address prefix", self.source)
+
+    def test_dialing_classification_includes_lan_records(self):
+        self.assertIn(
+            "self.address_book.get_fan_and_lan_addresses().values()",
+            self.source,
+        )
+        self.assertIn(
+            "Unable to update FAN/LAN dialing classification",
+            self.source,
+        )
 
     def test_slow_gate_recovery_does_not_remove_transient_misses(self):
         self.assertIn("import time as lan_discovery_time", self.source)

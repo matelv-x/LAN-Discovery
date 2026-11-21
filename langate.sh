@@ -403,6 +403,25 @@ def patch_address_manager():
         api_ports = sorted({8080, 8081, int(configured_port or 8080)})
         local_address = self.address_book.get_local_address()
         found = {}
+
+        def remember_gate(gate):
+            """Keep one stable route when a gate answers on multiple aliases."""
+            name = gate["name"]
+            current = found.get(name)
+            if current is None:
+                found[name] = gate
+                return
+            candidate_key = (
+                int(lan_discovery_ipaddress.ip_address(gate["ip_address"])),
+                int(gate.get("api_port", 0)),
+            )
+            current_key = (
+                int(lan_discovery_ipaddress.ip_address(current["ip_address"])),
+                int(current.get("api_port", 0)),
+            )
+            if candidate_key < current_key:
+                found[name] = gate
+
         hosts = [str(host) for host in network.hosts()]
         jobs = [(ip_addr, port) for ip_addr in hosts for port in api_ports]
 
@@ -432,7 +451,7 @@ def patch_address_manager():
                 for future in as_completed(future_to_target):
                     gate = future.result()
                     if gate:
-                        found[gate["name"]] = gate
+                        remember_gate(gate)
                     else:
                         failed_targets.append(future_to_target[future])
 
@@ -471,7 +490,7 @@ def patch_address_manager():
                 ip_addr, port, local_address, read_timeout=read_timeout
             )
             if gate:
-                found[gate["name"]] = gate
+                remember_gate(gate)
                 recovered.append(f'{gate["name"]}@{ip_addr}:{port}')
         if recovered:
             self.log.log(
@@ -656,6 +675,27 @@ def patch_address_manager():
         self.log.log( f'Unable to get IP for {stargate_address}')
         return None'''
     text, _ = replace_function(text, "get_ip_from_stargate_address", get_ip)
+
+    is_fan_made = '''    def is_fan_made_stargate(self, dialed_address):
+        """
+        Return True when the address prefix belongs to a remote FAN or LAN
+        gate. LAN records must participate here or a discovered local gate is
+        incorrectly handled as a standard address and no Subspace connection
+        is attempted.
+        """
+        local_address = self.address_book.get_local_address()
+        for gate_config in self.address_book.get_fan_and_lan_addresses().values():
+            try:
+                if dialed_address[:2] == local_address[:2]:
+                    return False
+                if dialed_address[:2] == gate_config['gate_address'][:2]:
+                    return True
+            except (AttributeError, KeyError):
+                pass
+        return False'''
+    text, replaced = replace_function(text, "is_fan_made_stargate", is_fan_made)
+    if not replaced:
+        raise RuntimeError("Unable to update FAN/LAN dialing classification")
 
     gate_entry_from_ip = '''    def get_gate_entry_from_ip(self, remote_ip):
         """
